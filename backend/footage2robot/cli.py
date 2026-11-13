@@ -15,6 +15,26 @@ def _csv(value: str) -> list[str]:
     return [v.strip() for v in value.split(",") if v.strip()]
 
 
+def _load_dotenv() -> None:
+    """Read KEY=VALUE lines from a .env file in the working directory or the repository root.
+
+    Existing environment variables win, so real settings are never overridden.
+    """
+    import os
+    from pathlib import Path
+
+    for path in (Path.cwd() / ".env", Path(__file__).resolve().parents[2] / ".env"):
+        if not path.is_file():
+            continue
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            os.environ.setdefault(key.strip(), value.strip())
+        return
+
+
 def _self_signed(data_dir: str) -> dict:
     """Create (once) a self-signed certificate so phones on the LAN can use the camera."""
     import os
@@ -107,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd in ("serve", "worker"):
         import os
+        _load_dotenv()
         if args.data_dir:
             os.environ["FOOTAGE2ROBOT_DATA_DIR"] = os.path.abspath(args.data_dir)
 

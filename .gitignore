@@ -7,3 +7,4 @@ node_modules/
 frontend/dist/
 f2r_data/
 .DS_Store
+.env

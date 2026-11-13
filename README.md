@@ -109,12 +109,16 @@ The phone must load the app over https:
 1. In the Firebase console create a project, add a **Web app**, and under
    Authentication → Sign-in method enable **Email/Password** and/or **Google**.
 2. Under Authentication → Settings → Authorized domains, add the domain you serve the app from.
-3. Start the server with the two settings from `.env.example`:
+3. Copy `.env.example` to `.env` and fill in the two settings. `footage2robot serve` and
+   `docker compose` both read `.env` automatically (real environment variables take precedence):
 
 ```bash
-export FOOTAGE2ROBOT_FIREBASE_PROJECT=your-project-id
-export FOOTAGE2ROBOT_FIREBASE_WEB_CONFIG='{"apiKey":"...","authDomain":"...","projectId":"...","appId":"..."}'
+FOOTAGE2ROBOT_FIREBASE_PROJECT=your-project-id
+FOOTAGE2ROBOT_FIREBASE_WEB_CONFIG={"apiKey":"...","authDomain":"...","projectId":"...","appId":"..."}
 ```
+
+`firebase.json` in this repository records which sign-in methods are enabled; apply changes
+with `firebase deploy --only auth`.
 
 With these set, every API call needs a signed-in user and jobs are private to their owner.
 Without them the server runs as a single local user — only do that on a machine you trust.
