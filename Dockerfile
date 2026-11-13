@@ -23,8 +23,9 @@ ENV FOOTAGE2ROBOT_FRONTEND=/app/frontend/dist \
 # Bake the tracking models into the image so containers start without downloads.
 RUN python -c "from footage2robot.extract.models import ensure_model; [ensure_model(m) for m in ('pose_full', 'hand', 'interactive_segmenter')]"
 
-RUN useradd --create-home app && mkdir -p /data && chown app /data
-USER app
+# Runs as root on purpose: hosts such as Render mount the persistent disk at /data owned by
+# root, and a non-root user could not write jobs to it.
+RUN mkdir -p /data
 VOLUME /data
 EXPOSE 8000
 CMD ["footage2robot", "serve", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

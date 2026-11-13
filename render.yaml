@@ -1,0 +1,26 @@
+# Render Blueprint: New -> Blueprint -> pick this repository.
+# One Docker web service that serves the web app, the API and the conversion worker.
+services:
+  - type: web
+    name: footage2robot
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    # 2 GB RAM. The tracking models and TensorFlow do not fit in smaller plans;
+    # choose a larger plan here if conversions run out of memory.
+    plan: standard
+    # One worker keeps memory use within the plan above.
+    dockerCommand: footage2robot serve --host 0.0.0.0 --port 8000 --workers 1
+    healthCheckPath: /api/health
+    disk:
+      name: footage2robot-data
+      mountPath: /data
+      sizeGB: 10
+    envVars:
+      - key: PORT
+        value: "8000"
+      # Firebase Authentication. These are public identifiers (the browser receives them), not secrets.
+      - key: FOOTAGE2ROBOT_FIREBASE_PROJECT
+        value: footage2robot
+      - key: FOOTAGE2ROBOT_FIREBASE_WEB_CONFIG
+        value: '{"apiKey":"AIzaSyDPSxyxp9o-HsAAAY9eoG4q8jLVReLWWAw","authDomain":"footage2robot.firebaseapp.com","projectId":"footage2robot","appId":"1:566326779955:web:802c0d757fcf89b1cc4346","storageBucket":"footage2robot.firebasestorage.app","messagingSenderId":"566326779955"}'
