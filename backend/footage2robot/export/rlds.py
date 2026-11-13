@@ -52,6 +52,9 @@ def export_rlds(ds: RobotDataset, out_dir: Path) -> Path:
 
     d = ds.state_dim
     obs = {"state": tfds.features.Tensor(shape=(d,), dtype=np.float32, doc=", ".join(ds.state_names))}
+    if ds.has_env_state:
+        obs["object"] = tfds.features.Tensor(shape=(len(ds.env_state_names),), dtype=np.float32,
+                                             doc=", ".join(ds.env_state_names))
     w, h = ds.image_size
     if ds.has_images:
         obs["image"] = tfds.features.Image(shape=(h, w, 3), dtype=np.uint8, encoding_format="jpeg")
@@ -80,6 +83,8 @@ def export_rlds(ds: RobotDataset, out_dir: Path) -> Path:
             steps = []
             for t in range(n):
                 o = {"state": ep.state[t]}
+                if ds.has_env_state:
+                    o["object"] = ep.env_state[t]
                 if images is not None:
                     o["image"] = next(images)
                 steps.append({

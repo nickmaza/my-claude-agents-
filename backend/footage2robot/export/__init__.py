@@ -8,7 +8,8 @@ from typing import Callable
 from ..dataset import RobotDataset
 
 FORMATS = {
-    "lerobot": "LeRobot v2.1 (Parquet + MP4) — Hugging Face LeRobot, ACT, Diffusion Policy, pi0, SmolVLA",
+    "lerobot": "LeRobot v3.0 (Parquet + MP4) — current Hugging Face LeRobot: ACT, Diffusion Policy, pi0, SmolVLA",
+    "lerobot_v21": "LeRobot v2.1 (Parquet + MP4) — older LeRobot releases and tools",
     "rlds": "RLDS / TFDS (TFRecord) — Open X-Embodiment, Octo, OpenVLA, RT-X",
     "robomimic": "robomimic HDF5 — robomimic, RoboSuite, MimicGen, LIBERO-style loaders",
     "zarr": "Diffusion Policy Zarr replay buffer — Diffusion Policy, UMI",
@@ -19,7 +20,9 @@ FORMATS = {
 
 def get_exporter(fmt: str) -> Callable[[RobotDataset, Path], Path]:
     if fmt == "lerobot":
-        from .lerobot import export_lerobot as fn
+        from .lerobot_v3 import export_lerobot as fn
+    elif fmt == "lerobot_v21":
+        from .lerobot_v21 import export_lerobot_v21 as fn
     elif fmt == "rlds":
         from .rlds import export_rlds as fn
     elif fmt == "robomimic":

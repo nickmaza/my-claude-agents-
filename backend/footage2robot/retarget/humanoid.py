@@ -39,7 +39,7 @@ def _ball_joint(u: np.ndarray, ref: np.ndarray):
     lx = np.sum(x_axis * ref, -1)
     ly = np.sum(y_axis * ref, -1)
     yaw = np.arctan2(ly, lx)
-    yaw = np.where(np.hypot(lx, ly) < 0.17, np.nan, yaw)   # ill-defined when ref ∥ limb
+    yaw = np.where(np.hypot(lx, ly) < 0.35, np.nan, yaw)   # ill-defined when ref is nearly ∥ limb (< ~20°)
     return pitch, roll, yaw
 
 

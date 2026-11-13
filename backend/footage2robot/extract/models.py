@@ -12,6 +12,7 @@ MODEL_URLS = {
     "pose_full": f"{_BASE}/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task",
     "pose_heavy": f"{_BASE}/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task",
     "hand": f"{_BASE}/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
+    "interactive_segmenter": f"{_BASE}/interactive_segmenter/magic_touch/float32/latest/magic_touch.tflite",
 }
 
 
@@ -24,7 +25,7 @@ def cache_dir() -> Path:
 def ensure_model(name: str) -> Path:
     if name not in MODEL_URLS:
         raise KeyError(f"Unknown model '{name}'. Options: {sorted(MODEL_URLS)}")
-    path = cache_dir() / f"{name}.task"
+    path = cache_dir() / f"{name}{Path(MODEL_URLS[name]).suffix}"
     if not path.exists():
         tmp = path.with_suffix(".part")
         urllib.request.urlretrieve(MODEL_URLS[name], tmp)

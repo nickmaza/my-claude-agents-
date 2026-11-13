@@ -2,8 +2,8 @@ import { useMemo, useState } from "react";
 
 interface Props {
   names: string[];
-  state: number[][];
-  offset: number; // clip frame of the episode's first step
+  /** Episodes cut from this clip: first clip frame + state rows. */
+  episodes: { offset: number; state: number[][] }[];
   clipFrames: number;
   frame: number;
   fps: number;
@@ -15,29 +15,36 @@ const W = 800;
 const H = 220;
 const PAD = { l: 44, r: 8, t: 8, b: 20 };
 
-export default function SignalChart({ names, state, offset, clipFrames, frame, fps, onSeek }: Props) {
+export default function SignalChart({ names, episodes, clipFrames, frame, fps, onSeek }: Props) {
   const [selected, setSelected] = useState<number[]>(() => names.slice(0, Math.min(7, names.length)).map((_, i) => i));
   const [filter, setFilter] = useState("");
 
   const { paths, lo, hi } = useMemo(() => {
     let lo = Infinity;
     let hi = -Infinity;
-    for (const row of state)
-      for (const d of selected) {
-        if (row[d] < lo) lo = row[d];
-        if (row[d] > hi) hi = row[d];
-      }
+    for (const ep of episodes)
+      for (const row of ep.state)
+        for (const d of selected) {
+          if (row[d] < lo) lo = row[d];
+          if (row[d] > hi) hi = row[d];
+        }
     if (!isFinite(lo)) [lo, hi] = [0, 1];
     if (hi - lo < 1e-6) [lo, hi] = [lo - 0.5, hi + 0.5];
-    const x = (k: number) => PAD.l + ((offset + k) / Math.max(1, clipFrames - 1)) * (W - PAD.l - PAD.r);
+    const x = (f: number) => PAD.l + (f / Math.max(1, clipFrames - 1)) * (W - PAD.l - PAD.r);
     const y = (v: number) => PAD.t + (1 - (v - lo) / (hi - lo)) * (H - PAD.t - PAD.b);
-    const paths = selected.map((d) => state.map((row, k) => `${x(k).toFixed(1)},${y(row[d]).toFixed(1)}`).join(" "));
+    const paths = episodes.flatMap((ep, e) =>
+      selected.map((d, i) => ({
+        key: `${e}-${d}`,
+        color: PALETTE[i % PALETTE.length],
+        points: ep.state.map((row, k) => `${x(ep.offset + k).toFixed(1)},${y(row[d]).toFixed(1)}`).join(" "),
+      })),
+    );
     return { paths, lo, hi };
-  }, [state, selected, offset, clipFrames]);
+  }, [episodes, selected, clipFrames]);
 
   const cursorX = PAD.l + (frame / Math.max(1, clipFrames - 1)) * (W - PAD.l - PAD.r);
-  const step = frame - offset;
-  const row = step >= 0 && step < state.length ? state[step] : null;
+  const current = episodes.find((ep) => frame >= ep.offset && frame < ep.offset + ep.state.length);
+  const row = current ? current.state[frame - current.offset] : null;
   const shown = names.map((n, i) => [n, i] as const).filter(([n]) => n.toLowerCase().includes(filter.toLowerCase()));
 
   return (
@@ -74,8 +81,13 @@ export default function SignalChart({ names, state, offset, clipFrames, frame, f
         <text x={W - PAD.r} y={H - 4} textAnchor="end" className="axis">
           {(clipFrames / fps).toFixed(1)}s
         </text>
-        {paths.map((pts, i) => (
-          <polyline key={selected[i]} points={pts} fill="none" stroke={PALETTE[i % PALETTE.length]} strokeWidth={1.8} />
+        {episodes.map((ep, e) => {
+          const x0 = PAD.l + (ep.offset / Math.max(1, clipFrames - 1)) * (W - PAD.l - PAD.r);
+          const x1 = PAD.l + ((ep.offset + ep.state.length - 1) / Math.max(1, clipFrames - 1)) * (W - PAD.l - PAD.r);
+          return <rect key={e} x={x0} y={PAD.t} width={Math.max(0, x1 - x0)} height={H - PAD.t - PAD.b} className="episode-band" />;
+        })}
+        {paths.map((p) => (
+          <polyline key={p.key} points={p.points} fill="none" stroke={p.color} strokeWidth={1.8} />
         ))}
         <line x1={cursorX} x2={cursorX} y1={PAD.t} y2={H - PAD.b} className="cursor" />
       </svg>

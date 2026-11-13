@@ -74,6 +74,11 @@ class HumanMotion:
     hands_conf: np.ndarray     # (T, 2) per-hand presence confidence
     source: str = ""
     meta: dict = field(default_factory=dict)
+    # Optional metric world frame (set by marker calibration): rotation (3, 3) with
+    # the world axes as columns, and the world origin per frame (T, 3), both in the
+    # same hip-centred camera-aligned coordinates as body_3d.
+    world_R: np.ndarray | None = None
+    world_origin: np.ndarray | None = None
 
     @property
     def num_frames(self) -> int:
@@ -114,14 +119,18 @@ class HumanMotion:
         path = Path(path)
         header = {"fps": self.fps, "width": self.width, "height": self.height,
                   "source": self.source, "meta": self.meta}
-        np.savez_compressed(path, header=np.array(json.dumps(header)),
-                            **{k: getattr(self, k) for k in self._ARRAYS})
+        arrays = {k: getattr(self, k) for k in self._ARRAYS}
+        if self.world_R is not None and self.world_origin is not None:
+            arrays.update(world_R=self.world_R, world_origin=self.world_origin)
+        np.savez_compressed(path, header=np.array(json.dumps(header)), **arrays)
 
     @classmethod
     def load(cls, path: str | Path) -> "HumanMotion":
         with np.load(path, allow_pickle=False) as z:
             header = json.loads(str(z["header"]))
             arrays = {k: z[k] for k in cls._ARRAYS}
+            if "world_R" in z:
+                arrays.update(world_R=z["world_R"], world_origin=z["world_origin"])
         return cls(fps=header["fps"], width=header["width"], height=header["height"],
                    source=header.get("source", ""), meta=header.get("meta", {}), **arrays)
 

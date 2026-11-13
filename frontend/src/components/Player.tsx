@@ -6,11 +6,21 @@ interface Props {
   videoUrl: string | null;
   frame: number;
   onFrame: (frame: number) => void;
+  /** When set, clicking the picture reports the clicked point (normalised 0..1). */
+  onPick?: (x: number, y: number) => void;
+  /** Pending object point to show: [frame, x, y]. */
+  prompt?: [number, number, number] | null;
 }
 
-const COLORS = { body: "#4cc9f0", left: "#2ec4b6", right: "#ff9f1c", joint: "#ffffff" };
+const COLORS = { body: "#4cc9f0", left: "#2ec4b6", right: "#ff9f1c", joint: "#ffffff", object: "#c084fc" };
 
-function draw(canvas: HTMLCanvasElement, overlay: Overlay, frame: number, hasVideo: boolean) {
+function draw(
+  canvas: HTMLCanvasElement,
+  overlay: Overlay,
+  frame: number,
+  hasVideo: boolean,
+  prompt?: [number, number, number] | null,
+) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
   const { width: w, height: h } = canvas;
@@ -56,9 +66,24 @@ function draw(canvas: HTMLCanvasElement, overlay: Overlay, frame: number, hasVid
       dots(hand, 0, 1.8);
     });
   }
+  const box = overlay.object?.[frame];
+  if (box && box[4] > 0.5) {
+    ctx.strokeStyle = COLORS.object;
+    ctx.lineWidth = 2.5 * scale;
+    ctx.strokeRect((box[0] - box[2] / 2) * w, (box[1] - box[3] / 2) * h, box[2] * w, box[3] * h);
+  }
+  if (prompt && Math.abs(prompt[0] - frame) <= 1) {
+    ctx.strokeStyle = COLORS.object;
+    ctx.fillStyle = "rgba(192, 132, 252, 0.35)";
+    ctx.lineWidth = 2 * scale;
+    ctx.beginPath();
+    ctx.arc(prompt[1] * w, prompt[2] * h, 9 * scale, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
 }
 
-export default function Player({ overlay, videoUrl, frame, onFrame }: Props) {
+export default function Player({ overlay, videoUrl, frame, onFrame, onPick, prompt }: Props) {
   const total = overlay.body.length;
   const duration = total / overlay.fps;
   const wrap = useRef<HTMLDivElement>(null);
@@ -68,6 +93,7 @@ export default function Player({ overlay, videoUrl, frame, onFrame }: Props) {
   const [videoOk, setVideoOk] = useState(Boolean(videoUrl));
   const time = useRef(frame / overlay.fps);
   const hasVideo = Boolean(videoUrl) && videoOk;
+  const promptRef = useRef(prompt);
 
   // keep the canvas backing store matched to its displayed size
   useEffect(() => {
@@ -78,7 +104,7 @@ export default function Player({ overlay, videoUrl, frame, onFrame }: Props) {
       const dpr = window.devicePixelRatio || 1;
       cv.width = Math.round(el.clientWidth * dpr);
       cv.height = Math.round(el.clientHeight * dpr);
-      draw(cv, overlay, Math.min(total - 1, Math.round(time.current * overlay.fps)), hasVideo);
+      draw(cv, overlay, Math.min(total - 1, Math.round(time.current * overlay.fps)), hasVideo, promptRef.current);
     };
     resize();
     const obs = new ResizeObserver(resize);
@@ -87,8 +113,9 @@ export default function Player({ overlay, videoUrl, frame, onFrame }: Props) {
   }, [overlay, total, hasVideo]);
 
   useEffect(() => {
-    if (canvas.current) draw(canvas.current, overlay, frame, hasVideo);
-  }, [overlay, frame, hasVideo]);
+    promptRef.current = prompt;
+    if (canvas.current) draw(canvas.current, overlay, frame, hasVideo, prompt);
+  }, [overlay, frame, hasVideo, prompt]);
 
   const seek = useCallback(
     (t: number) => {
@@ -133,7 +160,14 @@ export default function Player({ overlay, videoUrl, frame, onFrame }: Props) {
 
   return (
     <div className="player">
-      <div className="stage" ref={wrap} style={{
+      <div
+        className={`stage ${onPick ? "picking" : ""}`}
+        onClick={(e) => {
+          if (!onPick) return;
+          const r = e.currentTarget.getBoundingClientRect();
+          onPick((e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
+        }}
+        ref={wrap} style={{
           aspectRatio: `${overlay.width} / ${overlay.height}`,
           maxWidth: `calc(62vh * ${(overlay.width / overlay.height).toFixed(4)})`,
         }}>
@@ -174,6 +208,11 @@ export default function Player({ overlay, videoUrl, frame, onFrame }: Props) {
         <span>
           <i style={{ background: COLORS.right }} /> right hand
         </span>
+        {overlay.object && (
+          <span>
+            <i style={{ background: COLORS.object }} /> object
+          </span>
+        )}
       </div>
     </div>
   );

@@ -77,3 +77,69 @@ def iter_frames(path: str | Path, stride: int = 1, start_s: float = 0.0,
 def resize_frame(rgb: np.ndarray, size: tuple[int, int]) -> np.ndarray:
     """Letterbox-free resize to (width, height)."""
     return cv2.resize(rgb, size, interpolation=cv2.INTER_AREA)
+
+
+BROWSER_SAFE_EXTS = {".mp4"}
+
+
+def needs_normalizing(path: str | Path) -> bool:
+    """True for containers/codecs that are unreliable to index or to play back in a browser.
+
+    Browser recordings (WebM from MediaRecorder) have no duration and a variable
+    frame rate, and phone .mov files are often HEVC, which most browsers cannot
+    play. Both are re-encoded to constant-frame-rate H.264 before processing.
+    """
+    import shutil
+    import subprocess
+
+    path = Path(path)
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        return False
+    if path.suffix.lower() not in BROWSER_SAFE_EXTS:
+        return True
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=codec_name,r_frame_rate,avg_frame_rate,nb_frames", "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=60, check=True).stdout
+        import json
+        stream = json.loads(out)["streams"][0]
+    except Exception:
+        return False
+
+    def rate(v: str) -> float:
+        a, _, b = v.partition("/")
+        return float(a) / float(b or 1) if float(b or 1) else 0.0
+
+    r, avg = rate(stream.get("r_frame_rate", "0")), rate(stream.get("avg_frame_rate", "0"))
+    variable = avg <= 0 or abs(r - avg) / max(avg, 1e-6) > 0.02
+    return stream.get("codec_name") != "h264" or variable or not str(stream.get("nb_frames", "")).isdigit()
+
+
+def normalize(src: str | Path, dst: str | Path, max_fps: float = 60.0) -> Path:
+    """Re-encode to constant-frame-rate H.264/yuv420p MP4 (no audio)."""
+    import subprocess
+
+    src, dst = Path(src), Path(dst)
+    fps = 30.0
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                              "stream=avg_frame_rate", "-of", "csv=p=0", str(src)],
+                             capture_output=True, text=True, timeout=60).stdout.strip()
+        a, _, b = out.partition("/")
+        value = float(a) / float(b or 1)
+        if 1.0 <= value <= 240.0:
+            fps = min(value, max_fps)
+    except (ValueError, ZeroDivisionError, subprocess.SubprocessError):
+        pass
+    tmp = dst.with_name(dst.stem + ".part.mp4")
+    proc = subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-an", "-vf",
+         f"fps={fps:.4f},scale=trunc(iw/2)*2:trunc(ih/2)*2", "-c:v", "libx264", "-preset", "veryfast",
+         "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(tmp)],
+        capture_output=True, text=True)
+    if proc.returncode != 0 or not tmp.exists():
+        tmp.unlink(missing_ok=True)
+        raise ValueError(f"Could not read video: {proc.stderr.strip()[-300:] or 'ffmpeg failed'}")
+    tmp.replace(dst)
+    return dst

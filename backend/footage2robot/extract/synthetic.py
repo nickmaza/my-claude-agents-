@@ -16,6 +16,9 @@ from ..schema import B, HumanMotion
 from .base import Extractor, ProgressFn
 
 
+CAMERA_OFFSET = np.array([0.0, 0.1, 2.6])   # where the hips sit in the camera frame
+
+
 def _unit(v: np.ndarray) -> np.ndarray:
     return v / (np.linalg.norm(v) + 1e-9)
 
@@ -134,9 +137,9 @@ class SyntheticExtractor(Extractor):
             for side, wr, el, grip, mirror in ((0, l_wr, l_el, 0.2, -1.0), (1, r_wr, r_el, grip_r, 1.0)):
                 pts = synth_hand(wr, wr - el, fwd + 0.3 * up, grip, mirror)
                 m.hands_3d[i, side] = pts - pts.mean(axis=0)   # hand-centred like MediaPipe
-                m.hands_2d[i, side] = self._project(pts)
+                m.hands_2d[i, side] = self._project(pts, width, height)
                 m.hands_conf[i, side] = 0.97
-            m.body_2d[i] = self._project(body)
+            m.body_2d[i] = self._project(body, width, height)
             if progress and i % 20 == 0:
                 progress((i + 1) / n, f"Synthesising frame {i + 1}/{n}")
 
@@ -146,7 +149,6 @@ class SyntheticExtractor(Extractor):
         return m
 
     @staticmethod
-    def _project(p: np.ndarray) -> np.ndarray:
-        z = p[:, 2] + 2.5
-        f = 1.1
-        return np.stack([0.5 + f * p[:, 0] / z, 0.55 + f * p[:, 1] / z], axis=1).astype(np.float32)
+    def _project(p: np.ndarray, width: int = 640, height: int = 480) -> np.ndarray:
+        from ..calibrate import Camera
+        return Camera(width, height).project(p + CAMERA_OFFSET).astype(np.float32)

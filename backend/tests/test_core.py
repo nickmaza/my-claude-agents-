@@ -121,3 +121,50 @@ def test_optional_dims_default_to_zero(motion):
     ep = build_episode(traj, task="t")
     assert len(ep) == m.num_frames and np.isfinite(ep.state).all()
     assert "left_knee" in ep.meta["defaulted_dims"]
+
+
+def test_tracker_flips_are_rejected():
+    """Single-frame torso spins and hand flips (tracker artefacts) must not reach the robot states."""
+    from footage2robot.extract import get_extractor
+    from footage2robot.process import clean_motion
+    from footage2robot.process.filters import implausible_frames
+
+    raw = get_extractor("synthetic").extract("")
+    clean = retarget(clean_motion(raw), "single_arm", RetargetConfig(rotation="rot6d")).state
+    glitchy = get_extractor("synthetic").extract("")
+    a = np.deg2rad(120)
+    spin = np.array([[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]], np.float32)
+    for t in (30, 31, 70):                                   # the whole body estimate spins
+        glitchy.body_3d[t] = glitchy.body_3d[t] @ spin.T
+    for t in (50, 90):                                       # the right hand flips over
+        glitchy.hands_3d[t, 1] = glitchy.hands_3d[t, 1] * [1, -1, -1]
+    assert implausible_frames(glitchy.body_3d, glitchy.fps)[[30, 31, 70]].all()
+    assert not implausible_frames(raw.body_3d, raw.fps).any()
+
+    fixed = retarget(clean_motion(glitchy), "single_arm", RetargetConfig(rotation="rot6d")).state
+    assert np.isfinite(fixed).all()
+    assert np.abs(fixed - clean).max() < 0.12                # close to the glitch-free result
+    assert np.abs(np.diff(fixed[:, :9], axis=0)).max() < 0.15     # and smooth frame to frame
+    unfiltered = retarget(glitchy, "single_arm", RetargetConfig(rotation="rot6d")).state
+    assert np.abs(np.diff(unfiltered[:, :9], axis=0)).max() > 0.5  # the glitches were real
+
+
+def test_hand_tracker_dropouts_do_not_move_the_end_effector(motion):
+    import copy
+    m = copy.deepcopy(motion)
+    m.hands_3d[40:55, 1] = np.nan                            # hand tracker loses the right hand for half a second
+    a = retarget(motion, "single_arm", RetargetConfig(rotation="rot6d", side="right")).state
+    b = retarget(m, "single_arm", RetargetConfig(rotation="rot6d", side="right")).state
+    assert np.isfinite(b).all()
+    assert np.abs(a[:, :3] - b[:, :3]).max() < 0.02          # position barely changes
+    assert np.abs(np.diff(b[:, :9], axis=0)).max() < 0.15    # no hop at the dropout edges
+
+
+def test_humanoid_survives_a_hidden_arm(motion):
+    import copy
+    m = copy.deepcopy(motion)
+    m.body_3d[:, [13, 15, 17, 19, 21]] = np.nan              # left arm never visible
+    for emb in ("humanoid", "unitree_g1"):
+        ep = build_episode(retarget(m, emb), task="t")
+        assert len(ep) == m.num_frames and np.isfinite(ep.state).all()
+        assert any("left_elbow" in n for n in ep.meta["defaulted_dims"])

@@ -1,4 +1,4 @@
-"""LeRobot dataset v2.1 export (Parquet tables + MP4 videos + JSON(L) metadata).
+"""LeRobot dataset v2.1 export — the layout used by lerobot releases before v3.0.
 
 Layout::
 
@@ -30,8 +30,12 @@ def _video_size(w: int, h: int) -> tuple[int, int]:
     return max(2, int(w * s) // 2 * 2), max(2, int(h * s) // 2 * 2)
 
 
-def encode_video(frames: Iterable[np.ndarray], path: Path, fps: float) -> dict:
-    """Encode RGB frames to H.264/yuv420p MP4. Returns video info + image stats."""
+def encode_video(frames: Iterable[np.ndarray], path: Path, fps: float, keep_samples: bool = False) -> dict:
+    """Encode RGB frames to H.264/yuv420p MP4. Returns video info + image stats.
+
+    With ``keep_samples`` the result also carries ``samples``: a list with one
+    (N, 3) array of sampled pixels in [0, 1] per source frame, for statistics.
+    """
     import cv2
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -58,7 +62,9 @@ def encode_video(frames: Iterable[np.ndarray], path: Path, fps: float) -> dict:
             proc.stdin.write(np.ascontiguousarray(frame).tobytes())
         else:
             writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-        if n % 10 == 0:
+        if keep_samples:      # every frame, sparsely, so per-episode stats stay cheap in memory
+            sample.append(frame[::16, ::16].reshape(-1, 3).astype(np.float32) / 255.0)
+        elif n % 10 == 0:
             sample.append(frame[::4, ::4].reshape(-1, 3).astype(np.float32) / 255.0)
         n += 1
     if proc:
@@ -71,14 +77,17 @@ def encode_video(frames: Iterable[np.ndarray], path: Path, fps: float) -> dict:
     stats = {k: np.asarray(v).reshape(3, 1, 1).tolist() for k, v in
              {"min": px.min(0), "max": px.max(0), "mean": px.mean(0), "std": px.std(0)}.items()}
     stats["count"] = [len(sample)]
-    return {"width": size[0], "height": size[1], "codec": codec, "frames": n, "stats": stats}
+    out = {"width": size[0], "height": size[1], "codec": codec, "frames": n, "stats": stats}
+    if keep_samples:
+        out["samples"] = sample
+    return out
 
 
 def _fixed_list(arr: np.ndarray) -> pa.Array:
     return pa.FixedSizeListArray.from_arrays(pa.array(arr.reshape(-1), type=pa.float32()), arr.shape[1])
 
 
-def export_lerobot(ds: RobotDataset, out_dir: Path) -> Path:
+def export_lerobot_v21(ds: RobotDataset, out_dir: Path) -> Path:
     meta = out_dir / "meta"
     meta.mkdir(parents=True, exist_ok=True)
     cam_key = f"observation.images.{ds.camera}"
@@ -97,6 +106,7 @@ def export_lerobot(ds: RobotDataset, out_dir: Path) -> Path:
         index = global_index + frame_index
         table = pa.table({
             "observation.state": _fixed_list(ep.state),
+            **({"observation.environment_state": _fixed_list(ep.env_state)} if ds.has_env_state else {}),
             "action": _fixed_list(ep.action),
             "timestamp": pa.array(timestamp, type=pa.float32()),
             "frame_index": pa.array(frame_index),
@@ -114,6 +124,8 @@ def export_lerobot(ds: RobotDataset, out_dir: Path) -> Path:
             "episode_index": feature_stats(np.full(n, i)), "index": feature_stats(index),
             "task_index": feature_stats(np.full(n, task_index[ep.task])),
         }
+        if ds.has_env_state:
+            stats["observation.environment_state"] = feature_stats(ep.env_state)
         if ds.has_images:
             video_info = encode_video(
                 ep.iter_images(), out_dir / f"videos/chunk-{chunk:03d}/{cam_key}/episode_{i:06d}.mp4", ds.fps)
@@ -131,6 +143,9 @@ def export_lerobot(ds: RobotDataset, out_dir: Path) -> Path:
         "timestamp": scalar("float32"), "frame_index": scalar("int64"),
         "episode_index": scalar("int64"), "index": scalar("int64"), "task_index": scalar("int64"),
     }
+    if ds.has_env_state:
+        features["observation.environment_state"] = {
+            "dtype": "float32", "shape": [len(ds.env_state_names)], "names": ds.env_state_names}
     if video_info:
         features[cam_key] = {
             "dtype": "video", "shape": [video_info["height"], video_info["width"], 3],

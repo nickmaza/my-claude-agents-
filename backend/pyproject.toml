@@ -6,7 +6,6 @@ build-backend = "setuptools.build_meta"
 name = "footage2robot"
 version = "0.1.0"
 description = "Turn videos of people doing tasks into robot-learning datasets."
-readme = "../README.md"
 requires-python = ">=3.10"
 dependencies = [
   "numpy>=1.24",
@@ -18,10 +17,15 @@ dependencies = [
   "fastapi>=0.110",
   "python-multipart>=0.0.9",
   "uvicorn>=0.29",
+  "pandas>=2.0",
+  "google-auth>=2.20",
+  "cryptography>=41",
+  "requests>=2.31",
 ]
 
 [project.optional-dependencies]
 rlds = ["tensorflow-cpu>=2.15", "tensorflow-datasets>=4.9"]
+sam2 = ["sam2>=1.0", "torch>=2.3"]
 dev = ["pytest>=8", "httpx>=0.27"]
 
 [project.scripts]
@@ -29,6 +33,9 @@ footage2robot = "footage2robot.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["footage2robot*"]
+
+[tool.setuptools.package-data]
+footage2robot = ["robots/data/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

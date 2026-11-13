@@ -1,5 +1,6 @@
 import { DragEvent, useRef, useState } from "react";
 import { api, Job, JobConfig, Options } from "../api";
+import Recorder from "./Recorder";
 
 interface Props {
   options: Options;
@@ -52,16 +53,30 @@ export default function NewJob({ options, onCreated }: Props) {
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [source, setSource] = useState<"upload" | "record">("upload");
   const [config, setConfig] = useState<JobConfig>({
     task: "",
-    embodiments: Object.keys(options.embodiments),
-    formats: Object.keys(options.formats),
+    embodiments: options.generic_embodiments,
+    formats: Object.keys(options.formats).filter((f) => f !== "lerobot_v21"),
     target_fps: 30,
     action_mode: "absolute",
     rotation: "euler",
     side: "auto",
     include_images: true,
+    person_height_m: null,
+    arm_length_m: null,
+    marker_size_m: null,
+    split: "none",
+    track_objects: false,
   });
+  const pick = (keys: string[]) =>
+    Object.fromEntries(
+      keys.map((k) => {
+        const m = options.embodiments[k].match(/^(.*?) \((.*)\)$/);
+        return [k, m ? `${m[1]} — ${m[2]}` : options.embodiments[k]];
+      }),
+    );
+  const numberOrNull = (v: string) => (v.trim() === "" || !isFinite(Number(v)) ? null : Number(v));
   const input = useRef<HTMLInputElement>(null);
   const set = <K extends keyof JobConfig>(key: K, value: JobConfig[K]) => setConfig((c) => ({ ...c, [key]: value }));
 
@@ -110,6 +125,18 @@ export default function NewJob({ options, onCreated }: Props) {
         and hands are tracked in 3D, retargeted to robot states and actions, and exported as ready-to-train datasets.
       </p>
 
+      <div className="tabs source" role="tablist">
+        <button type="button" role="tab" aria-selected={source === "upload"} className={source === "upload" ? "on" : ""} onClick={() => setSource("upload")}>
+          Upload videos
+        </button>
+        <button type="button" role="tab" aria-selected={source === "record"} className={source === "record" ? "on" : ""} onClick={() => setSource("record")}>
+          Record with camera
+        </button>
+      </div>
+
+      {source === "record" ? (
+        <Recorder takes={files.length} onTake={(file) => setFiles((prev) => [...prev, file])} />
+      ) : (
       <div
         className={`dropzone ${dragging ? "dragging" : ""}`}
         onDragOver={(e) => {
@@ -139,6 +166,7 @@ export default function NewJob({ options, onCreated }: Props) {
           {options.video_extensions.join(" ")} · up to {options.max_upload_mb} MB total · one demonstration per clip
         </span>
       </div>
+      )}
 
       {files.length > 0 && (
         <ul className="files">
@@ -175,16 +203,18 @@ export default function NewJob({ options, onCreated }: Props) {
       </label>
 
       <CheckGroup
-        title="Robot embodiments"
-        hint="What kind of robot the human motion is mapped onto. One dataset is produced per embodiment."
-        items={Object.fromEntries(
-          Object.entries(options.embodiments).map(([k, v]) => {
-            const m = v.match(/^(.*?) \((.*)\)$/);
-            return [k, m ? `${m[1]} — ${m[2]}` : v];
-          }),
-        )}
-        value={config.embodiments}
-        onChange={(v) => set("embodiments", v)}
+        title="Generic robot types"
+        hint="Robot-independent states (hand poses, generic joint angles). One dataset is produced per type."
+        items={pick(options.generic_embodiments)}
+        value={config.embodiments.filter((e) => options.generic_embodiments.includes(e))}
+        onChange={(v) => set("embodiments", [...v, ...config.embodiments.filter((e) => options.robots.includes(e))])}
+      />
+      <CheckGroup
+        title="Specific robots"
+        hint="Real joint commands for a particular robot, solved on its model and kept within its joint limits."
+        items={pick(options.robots)}
+        value={config.embodiments.filter((e) => options.robots.includes(e))}
+        onChange={(v) => set("embodiments", [...config.embodiments.filter((e) => !options.robots.includes(e)), ...v])}
       />
       <CheckGroup
         title="Export formats"
@@ -193,6 +223,50 @@ export default function NewJob({ options, onCreated }: Props) {
         value={config.formats}
         onChange={(v) => set("formats", v)}
       />
+
+      <fieldset className="group">
+        <legend>Episodes and objects</legend>
+        <label className="field inline">
+          <input type="checkbox" checked={config.split === "auto"} onChange={(e) => set("split", e.target.checked ? "auto" : "none")} />
+          <span>
+            Split long clips into separate demonstrations
+            <small className="muted block">Cuts where the hands pause with nothing held. You can adjust the cuts afterwards.</small>
+          </span>
+        </label>
+        <label className="field inline">
+          <input type="checkbox" checked={config.track_objects} onChange={(e) => set("track_objects", e.target.checked)} />
+          <span>
+            Track the object being handled
+            <small className="muted block">Follows the object in the image and adds its position to the dataset. Slower.</small>
+          </span>
+        </label>
+      </fieldset>
+
+      <fieldset className="group">
+        <legend>Real-world scale (optional)</legend>
+        <p className="muted small">
+          A single camera can only guess distances. Give one body measurement to get true metres, and optionally print
+          the <a href="/api/marker.png" target="_blank" rel="noreferrer">workspace marker</a> and lay it on the table
+          to fix where the workspace is.
+        </p>
+        <div className="grid">
+          <label className="field">
+            <span>Person&apos;s height (m)</span>
+            <input type="number" inputMode="decimal" step="0.01" min="0.8" max="2.5" placeholder="e.g. 1.75"
+              value={config.person_height_m ?? ""} onChange={(e) => set("person_height_m", numberOrNull(e.target.value))} />
+          </label>
+          <label className="field">
+            <span>Shoulder-to-wrist length (m)</span>
+            <input type="number" inputMode="decimal" step="0.01" min="0.25" max="1" placeholder="more accurate, e.g. 0.55"
+              value={config.arm_length_m ?? ""} onChange={(e) => set("arm_length_m", numberOrNull(e.target.value))} />
+          </label>
+          <label className="field">
+            <span>Marker edge length (m)</span>
+            <input type="number" inputMode="decimal" step="0.005" min="0.02" max="1" placeholder="only if the marker is in view"
+              value={config.marker_size_m ?? ""} onChange={(e) => set("marker_size_m", numberOrNull(e.target.value))} />
+          </label>
+        </div>
+      </fieldset>
 
       <details className="advanced">
         <summary>Advanced settings</summary>

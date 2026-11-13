@@ -1,0 +1,8 @@
+.git
+**/node_modules
+**/dist
+**/__pycache__
+**/.pytest_cache
+**/*.egg-info
+f2r_data
+backend/f2r_data

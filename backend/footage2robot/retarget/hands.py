@@ -42,12 +42,30 @@ def hand_points_cam(motion: HumanMotion, side: int) -> np.ndarray:
     return hand - hand[:, :1] + body_wrist[:, None]
 
 
+def _project_rotations(R: np.ndarray) -> np.ndarray:
+    """Nearest proper rotation to each (possibly blended) 3x3 matrix; NaN rows stay NaN."""
+    out = np.full_like(R, np.nan)
+    ok = np.isfinite(R).all(axis=(1, 2))
+    if ok.any():
+        u, _, vt = np.linalg.svd(R[ok])
+        d = np.sign(np.linalg.det(u @ vt))
+        u[:, :, 2] *= d[:, None]
+        out[ok] = u @ vt
+    return out
+
+
 def ee_orientation_cam(motion: HumanMotion, side: int) -> np.ndarray:
     """Hand frame in camera coordinates (T, 3, 3); columns x, y, z.
 
     z = approach direction (wrist -> middle knuckle), y = across the knuckles
-    (pinky -> index), x = palm normal (y × z). Falls back to the body model's
-    coarse hand points (wrist/index/pinky) when the hand tracker lost the hand.
+    (pinky -> index), x = palm normal (y × z).
+
+    The hand tracker gives a precise orientation but drops out now and then; the
+    body model's coarse hand points (wrist/index/pinky) are always there but
+    noisy. Switching between the two mid-clip makes the orientation jump, so
+    when the hand tracker covers a reasonable share of the clip its orientation
+    is carried through its own gaps (interpolated, held at the ends) and the
+    coarse estimate is used only for hands the tracker never really saw.
     """
     h = motion.hands_3d[:, side]
     z = h[:, H["middle_mcp"]] - h[:, H["wrist"]]
@@ -57,17 +75,51 @@ def ee_orientation_cam(motion: HumanMotion, side: int) -> np.ndarray:
     s = "left" if side == 0 else "right"
     bw, bi, bp = (motion.body_3d[:, B[f"{s}_{k}"]] for k in ("wrist", "index", "pinky"))
     R_body = frame_from_z_y(0.5 * (bi + bp) - bw, bi - bp)
-    missing = ~np.isfinite(R[:, 0, 0])
-    R[missing] = R_body[missing]
+    tracked = np.isfinite(R[:, 0, 0])
+    if tracked.mean() >= 0.3:
+        idx = np.where(tracked)[0]
+        t = np.arange(len(R))
+        flat = R.reshape(len(R), 9).copy()
+        for c in range(9):
+            flat[:, c] = np.interp(t, idx, flat[idx, c])      # linear inside gaps, held at the ends
+        from ..process.filters import smooth
+        flat = smooth(flat, 0.08 * motion.fps)                # orientation is the noisiest signal we have
+        R = _project_rotations(flat.reshape(-1, 3, 3).astype(np.float64))
+        R[~np.isfinite(bw[:, 0])] = np.nan                    # no arm in view: nothing to orient
+    else:
+        R[~tracked] = R_body[~tracked]
     return R
 
 
+def _carry_through_gaps(x: np.ndarray, min_coverage: float = 0.3) -> np.ndarray | None:
+    """Interpolate a (T, D) signal across its NaN gaps (held at the ends).
+
+    Returns None when too little of it was observed to be worth carrying.
+    """
+    ok = np.isfinite(x).all(axis=1)
+    if ok.mean() < min_coverage:
+        return None
+    idx, t = np.where(ok)[0], np.arange(len(x))
+    return np.stack([np.interp(t, idx, x[idx, c]) for c in range(x.shape[1])], axis=1)
+
+
 def ee_position_cam(motion: HumanMotion, side: int) -> np.ndarray:
-    """Grasp point: centre of the palm (wrist, index & pinky knuckles), camera frame."""
-    pts = hand_points_cam(motion, side)
-    palm = pts[:, [H["wrist"], H["index_mcp"], H["pinky_mcp"]]].mean(axis=1)
+    """Grasp point: centre of the palm (wrist, index & pinky knuckles), camera frame.
+
+    The palm sits a few centimetres from the body model's wrist; that offset
+    comes from the hand tracker and is carried through the tracker's dropouts
+    (see ``ee_orientation_cam``), so the grasp point does not hop when the hand
+    tracker flickers.
+    """
+    hand = motion.hands_3d[:, side]
     s = "left" if side == 0 else "right"
-    coarse = motion.body_3d[:, [B[f"{s}_wrist"], B[f"{s}_index"], B[f"{s}_pinky"]]].mean(axis=1)
+    wrist = motion.body_3d[:, B[f"{s}_wrist"]].astype(np.float64)
+    offset = hand[:, [H["wrist"], H["index_mcp"], H["pinky_mcp"]]].mean(axis=1) - hand[:, H["wrist"]]
+    carried = _carry_through_gaps(offset.astype(np.float64))
+    if carried is not None:
+        return wrist + carried
+    coarse = motion.body_3d[:, [B[f"{s}_wrist"], B[f"{s}_index"], B[f"{s}_pinky"]]].mean(axis=1).astype(np.float64)
+    palm = wrist + offset
     missing = ~np.isfinite(palm[:, 0])
     palm[missing] = coarse[missing]
     return palm
@@ -91,7 +143,17 @@ def gripper_closedness(motion: HumanMotion, side: int) -> np.ndarray:
     coarse = 1 - np.clip((np.linalg.norm(bt - bi, axis=-1) / (np.linalg.norm(bi - bw, axis=-1) + 1e-9) - 0.2) / 0.5, 0, 1)
     missing = ~np.isfinite(closed)
     closed[missing] = coarse[missing]
-    return closed.astype(np.float32)
+    return _median_filter(closed, motion.fps).astype(np.float32)
+
+
+def _median_filter(x: np.ndarray, fps: float, window_s: float = 0.17) -> np.ndarray:
+    """Running median that ignores NaNs: removes single-frame open/close flicker, keeps real grasps."""
+    half = max(1, int(round(window_s * fps / 2)))
+    out = x.copy()
+    for t in np.where(np.isfinite(x))[0]:
+        near = x[max(0, t - half):t + half + 1]
+        out[t] = np.median(near[np.isfinite(near)])
+    return out
 
 
 def finger_joint_angles(motion: HumanMotion, side: int) -> np.ndarray:

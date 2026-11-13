@@ -42,12 +42,16 @@ def export_zarr(ds: RobotDataset, out_dir: Path) -> Path:
     ends = np.cumsum([len(e) for e in ds.episodes]).astype(np.int64)
     _put(data, "state", state, (min(len(state), 1024), state.shape[1]))
     _put(data, "action", action, (min(len(action), 1024), action.shape[1]))
+    if ds.has_env_state:
+        env = np.concatenate([e.env_state for e in ds.episodes])
+        _put(data, "object", env, (min(len(env), 1024), env.shape[1]))
     if ds.has_images:
         img = np.concatenate([e.images(ds.image_size) for e in ds.episodes])
         _put(data, "img", img, (min(len(img), 32),) + img.shape[1:])
     _put(meta, "episode_ends", ends, (len(ends),))
     root.attrs.update({"fps": ds.fps, "embodiment": ds.embodiment, "state_names": ds.state_names,
                        "action_names": ds.action_names, "action_mode": ds.action_mode,
+                       "object_names": ds.env_state_names if ds.has_env_state else [],
                        "tasks": [e.task for e in ds.episodes]})
     (out_dir / "dataset.json").write_text(json.dumps(ds.describe(), indent=2))
     return path

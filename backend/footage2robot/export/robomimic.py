@@ -5,6 +5,7 @@ Layout::
     data/                      attrs: total, env_args (JSON)
       demo_0/                  attrs: num_samples, task
         obs/state              (T, D) float32
+        obs/object             (T, 5) float32       (if an object was tracked)
         obs/<camera>_image     (T, H, W, 3) uint8   (if video available)
         next_obs/state
         actions                (T, D) float32
@@ -35,6 +36,9 @@ def export_robomimic(ds: RobotDataset, out_dir: Path) -> Path:
             g.attrs["task"] = ep.task
             g.create_dataset("obs/state", data=ep.state)
             g.create_dataset("next_obs/state", data=np.concatenate([ep.state[1:], ep.state[-1:]]))
+            if ds.has_env_state:
+                g.create_dataset("obs/object", data=ep.env_state)
+                g.create_dataset("next_obs/object", data=np.concatenate([ep.env_state[1:], ep.env_state[-1:]]))
             if ds.has_images:
                 g.create_dataset(f"obs/{ds.camera}_image", data=ep.images(ds.image_size),
                                  compression="gzip", compression_opts=4, chunks=True)

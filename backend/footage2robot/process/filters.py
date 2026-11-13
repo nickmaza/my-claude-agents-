@@ -54,9 +54,58 @@ def smooth(x: np.ndarray, sigma_frames: float) -> np.ndarray:
     return out.reshape(x.shape).astype(np.float32)
 
 
+def rotation_outliers(R: np.ndarray, fps: float, window_s: float = 0.5, max_deviation_rad: float = 0.6,
+                      erode: int = 2) -> np.ndarray:
+    """Frames whose orientation (T, 3, 3) cannot be trusted, (T,) bool.
+
+    A torso or a hand does not turn tens of degrees and back within a frame or
+    two, but trackers emit exactly that when they flip between interpretations
+    or are about to lose (or have just re-found) their target. A frame is
+    rejected when its orientation deviates strongly from the local median
+    orientation, or when it borders a tracking dropout.
+    """
+    T = R.shape[0]
+    valid = np.isfinite(R).all(axis=(1, 2))
+    bad = np.zeros(T, bool)
+    half = max(1, int(round(window_s * fps)))
+    for t in np.where(valid)[0]:
+        lo, hi = max(0, t - half), min(T, t + half + 1)
+        near = R[lo:hi][valid[lo:hi]]
+        if len(near) < 3:
+            continue
+        u, _, vt = np.linalg.svd(np.median(near, axis=0))       # nearest rotation to the element-wise median
+        ref = u @ np.diag([1.0, 1.0, np.linalg.det(u @ vt)]) @ vt
+        angle = np.arccos(np.clip((np.trace(ref.T @ R[t]) - 1) / 2, -1, 1))
+        bad[t] = angle > max_deviation_rad
+    # frames next to a dropout are the tracker failing or recovering
+    missing = ~valid
+    if erode and 0 < missing.sum() < T:
+        near_gap = missing.copy()
+        for k in range(1, erode + 1):
+            near_gap[k:] |= missing[:-k]
+            near_gap[:-k] |= missing[k:]
+        bad |= near_gap & valid
+    return bad
+
+
+def implausible_frames(body_3d: np.ndarray, fps: float) -> np.ndarray:
+    """Frames whose body estimate cannot be trusted (see ``rotation_outliers``)."""
+    from ..retarget.geometry import body_frames
+    return rotation_outliers(body_frames(body_3d.astype(np.float64))["torso_R"], fps)
+
+
+def implausible_hand_frames(hand_3d: np.ndarray, fps: float) -> np.ndarray:
+    """Frames where one hand's (T, 21, 3) orientation flips away from its neighbours."""
+    from ..retarget.geometry import frame_from_z_y
+    from ..schema import H
+    h = hand_3d.astype(np.float64)
+    R = frame_from_z_y(h[:, H["middle_mcp"]] - h[:, H["wrist"]], h[:, H["index_mcp"]] - h[:, H["pinky_mcp"]])
+    return rotation_outliers(R, fps, window_s=0.35, max_deviation_rad=0.7, erode=1)
+
+
 def clean_motion(motion: HumanMotion, max_gap_s: float = 0.25, smooth_s: float = 0.05,
-                 min_confidence: float = 0.3) -> HumanMotion:
-    """Return a cleaned copy: drop low-confidence points, fill short gaps, smooth."""
+                 min_confidence: float = 0.5) -> HumanMotion:
+    """Return a cleaned copy: drop untrustworthy points and frames, fill short gaps, smooth."""
     m = copy.deepcopy(motion)
     max_gap = max(1, int(round(max_gap_s * m.fps)))
     sigma = smooth_s * m.fps
@@ -67,6 +116,15 @@ def clean_motion(motion: HumanMotion, max_gap_s: float = 0.25, smooth_s: float =
     hand_low = m.hands_conf < min_confidence
     m.hands_3d[hand_low] = np.nan
     m.hands_2d[hand_low] = np.nan
+
+    rejected = implausible_frames(m.body_3d, m.fps)
+    for name in ("body_3d", "body_2d", "hands_3d", "hands_2d"):
+        getattr(m, name)[rejected] = np.nan
+    m.meta["rejected_frames"] = int(rejected.sum())
+    for side in (0, 1):
+        flipped = implausible_hand_frames(m.hands_3d[:, side], m.fps)
+        m.hands_3d[flipped, side] = np.nan
+        m.hands_2d[flipped, side] = np.nan
 
     for name in ("body_3d", "body_2d", "hands_3d", "hands_2d"):
         setattr(m, name, smooth(fill_gaps(getattr(m, name), max_gap), sigma))

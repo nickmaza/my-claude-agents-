@@ -1,0 +1,15 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - f2r-data:/data
+    environment:
+      # Leave both empty to run without accounts (single local user).
+      FOOTAGE2ROBOT_FIREBASE_PROJECT: ${FOOTAGE2ROBOT_FIREBASE_PROJECT:-}
+      FOOTAGE2ROBOT_FIREBASE_WEB_CONFIG: ${FOOTAGE2ROBOT_FIREBASE_WEB_CONFIG:-}
+    restart: unless-stopped
+
+volumes:
+  f2r-data:

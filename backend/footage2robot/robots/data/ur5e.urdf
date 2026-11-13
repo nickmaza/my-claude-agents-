@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<!-- Kinematics only. Built from Universal Robots' published DH parameters for the UR5e:
+     d = [0.1625, 0, 0, 0.1333, 0.0997, 0.0996], a = [0, -0.425, -0.3922, 0, 0, 0],
+     alpha = [pi/2, 0, 0, pi/2, -pi/2, 0]. Frames are the DH frames. -->
+<robot name="ur5e">
+  <link name="base"/><link name="shoulder_link"/><link name="upper_arm_link"/><link name="forearm_link"/>
+  <link name="wrist_1_link"/><link name="wrist_2_link"/><link name="wrist_3_link"/><link name="tool0"/>
+  <joint name="shoulder_pan_joint" type="revolute"><origin xyz="0 0 0" rpy="0 0 0"/><parent link="base"/><child link="shoulder_link"/><axis xyz="0 0 1"/><limit lower="-6.2832" upper="6.2832"/></joint>
+  <joint name="shoulder_lift_joint" type="revolute"><origin xyz="0 0 0.1625" rpy="1.5707963 0 0"/><parent link="shoulder_link"/><child link="upper_arm_link"/><axis xyz="0 0 1"/><limit lower="-6.2832" upper="6.2832"/></joint>
+  <joint name="elbow_joint" type="revolute"><origin xyz="-0.425 0 0" rpy="0 0 0"/><parent link="upper_arm_link"/><child link="forearm_link"/><axis xyz="0 0 1"/><limit lower="-3.1416" upper="3.1416"/></joint>
+  <joint name="wrist_1_joint" type="revolute"><origin xyz="-0.3922 0 0" rpy="0 0 0"/><parent link="forearm_link"/><child link="wrist_1_link"/><axis xyz="0 0 1"/><limit lower="-6.2832" upper="6.2832"/></joint>
+  <joint name="wrist_2_joint" type="revolute"><origin xyz="0 0 0.1333" rpy="1.5707963 0 0"/><parent link="wrist_1_link"/><child link="wrist_2_link"/><axis xyz="0 0 1"/><limit lower="-6.2832" upper="6.2832"/></joint>
+  <joint name="wrist_3_joint" type="revolute"><origin xyz="0 0 0.0997" rpy="-1.5707963 0 0"/><parent link="wrist_2_link"/><child link="wrist_3_link"/><axis xyz="0 0 1"/><limit lower="-6.2832" upper="6.2832"/></joint>
+  <joint name="tool0_joint" type="fixed"><origin xyz="0 0 0.0996" rpy="0 0 0"/><parent link="wrist_3_link"/><child link="tool0"/></joint>
+</robot>

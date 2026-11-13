@@ -10,7 +10,7 @@ from footage2robot.pipeline import PipelineConfig, run_pipeline
 def result(video, tmp_path_factory):
     out = tmp_path_factory.mktemp("out")
     cfg = PipelineConfig(extractor="synthetic", task="pick up the cup", embodiments=["single_arm", "humanoid"],
-                         image_size=(64, 48), formats=["lerobot", "robomimic", "zarr", "npz", "json"])
+                         image_size=(64, 48), formats=["lerobot", "lerobot_v21", "robomimic", "zarr", "npz", "json"])
     return out, run_pipeline([video, video], out, cfg)
 
 
@@ -20,16 +20,66 @@ def test_summary(result):
     assert [d["embodiment"] for d in summary["datasets"]] == ["single_arm", "humanoid"]
     d = summary["datasets"][0]
     assert d["num_episodes"] == 2 and d["total_frames"] == 90 and d["has_images"]
-    assert set(d["exports"]) == {"lerobot", "robomimic", "zarr", "npz", "json"} and not d["errors"]
+    assert set(d["exports"]) == {"lerobot", "lerobot_v21", "robomimic", "zarr", "npz", "json"} and not d["errors"]
     assert json.loads((out / "summary.json").read_text())["clips"][0]["frames"] == 45
     preview = json.loads((out / "datasets/single_arm/preview.json").read_text())
     assert [e["clip"] for e in preview["episodes"]] == [0, 1] and len(preview["episodes"][0]["state"]) == 45
 
 
-def test_lerobot(result):
+def test_lerobot_v3(result):
     import cv2
     import pyarrow.parquet as pq
     root = result[0] / "datasets/single_arm/lerobot"
+    info = json.loads((root / "meta/info.json").read_text())
+    assert info["codebase_version"] == "v3.0" and info["total_episodes"] == 2 and info["total_frames"] == 90
+    data = pq.read_table(root / info["data_path"].format(chunk_index=0, file_index=0)).to_pydict()
+    assert data["index"] == list(range(90)) and data["episode_index"] == [0] * 45 + [1] * 45
+    assert data["frame_index"] == list(range(45)) * 2
+    assert np.allclose(data["action"][0], data["observation.state"][1])
+    episodes = pq.read_table(root / "meta/episodes/chunk-000/file-000.parquet").to_pylist()
+    assert [(e["dataset_from_index"], e["dataset_to_index"]) for e in episodes] == [(0, 45), (45, 90)]
+    key = "videos/observation.images.cam"
+    assert episodes[1][f"{key}/from_timestamp"] == pytest.approx(1.5) and episodes[1]["tasks"] == ["pick up the cup"]
+    assert np.shape(episodes[0]["stats/observation.images.cam/mean"]) == (3, 1, 1)
+    assert len(episodes[0]["stats/observation.state/q50"]) == 7
+    tasks = pq.read_table(root / "meta/tasks.parquet").to_pandas()
+    assert tasks.index.name == "task" and tasks.loc["pick up the cup", "task_index"] == 0
+    stats = json.loads((root / "meta/stats.json").read_text())
+    assert stats["action"]["count"] == [90] and "q99" in stats["observation.state"]
+    video = root / info["video_path"].format(video_key="observation.images.cam", chunk_index=0, file_index=0)
+    assert int(cv2.VideoCapture(str(video)).get(cv2.CAP_PROP_FRAME_COUNT)) == 90
+
+
+def test_lerobot_loads_in_the_lerobot_library(result):
+    """Load the export with the real library. Needs FOOTAGE2ROBOT_LEROBOT_PYTHON (an interpreter with
+    `lerobot[dataset]` installed) because lerobot pins dependencies that clash with ours."""
+    import os
+    import subprocess
+    python = os.environ.get("FOOTAGE2ROBOT_LEROBOT_PYTHON")
+    if not python:
+        pytest.skip("set FOOTAGE2ROBOT_LEROBOT_PYTHON to run")
+    script = (
+        "import sys, json, numpy as np\n"
+        "from lerobot.datasets import LeRobotDataset\n"
+        "ds = LeRobotDataset('local/f2r', root=sys.argv[1])\n"
+        "a, b = ds[0], ds[len(ds) - 1]\n"
+        "print(json.dumps({'n': len(ds), 'episodes': ds.num_episodes, 'state': a['observation.state'].tolist(),\n"
+        "  'image': list(a['observation.images.cam'].shape), 'last_ep': int(b['episode_index']), 'task': b['task'],\n"
+        "  'last_image_mean': float(b['observation.images.cam'].mean())}))\n")
+    out = subprocess.run([python, "-c", script, str(result[0] / "datasets/single_arm/lerobot")],
+                         capture_output=True, text=True, timeout=600)
+    assert out.returncode == 0, out.stderr[-2000:]
+    got = json.loads(out.stdout.strip().splitlines()[-1])
+    npz = np.load(result[0] / "datasets/single_arm/npz/episode_000000.npz")
+    assert got["n"] == 90 and got["episodes"] == 2 and got["last_ep"] == 1 and got["task"] == "pick up the cup"
+    assert np.allclose(got["state"], npz["state"][0], atol=1e-5)
+    assert got["image"] == [3, 120, 160] and 0.05 < got["last_image_mean"] < 0.6
+
+
+def test_lerobot_v21(result):
+    import cv2
+    import pyarrow.parquet as pq
+    root = result[0] / "datasets/single_arm/lerobot_v21"
     info = json.loads((root / "meta/info.json").read_text())
     assert info["codebase_version"] == "v2.1" and info["total_episodes"] == 2 and info["total_frames"] == 90
     assert info["features"]["observation.state"]["shape"] == [7]

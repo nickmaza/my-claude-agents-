@@ -80,5 +80,6 @@ def test_rejects_bad_input(client):
         r = client.post("/api/jobs/demo", data={"config": json.dumps(cfg)})
         assert r.status_code == 422, cfg
     assert client.post("/api/jobs/demo", data={"config": "not json"}).status_code == 422
+    assert client.post("/api/jobs/demo", data={"config": json.dumps({"person_height_m": 9})}).status_code == 422
     assert client.get("/api/jobs/../../etc").status_code == 404
     assert client.get("/api/jobs/zzzzzzzzzzzz").status_code == 404
